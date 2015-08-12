@@ -9,12 +9,42 @@
 #define HOST_INFORMATION_BUFFER_SIZE 240
 #define ERROR 4294967295 	/* Unsigned int -1 */
 
+#define TIME_INTERVAL 1
+
 struct domain_metadata {
+  char domainName[50];
+  char osType[10];
   time_t prevTimestamp;
   time_t curTimestamp;
   unsigned long long prevCpuTime;
   unsigned long long curCpuTime;
 };
+  
+pid_t 
+get_pid_by_process_name(char *process_name)
+{
+	pid_t pid = -1;
+	char cmd_string[512];
+	FILE *fp;
+
+	//sprintf(cmd_string, "ps | grep -w %s | grep -v grep", process_name);
+
+	sprintf(cmd_string, "ps aux | grep libvirt+ | grep %s | awk '{print $2}'", process_name);
+	// every guest os by kvm has a user called libvirt+ 
+	fp = popen(cmd_string, "r");
+
+	if (fp != NULL)
+	{
+	  //fgets (cmd_string, sizeof (cmd_string), fp);
+	  //fseek(fp, 0, SEEK_SET);
+	  fscanf(fp, "%d", &pid);
+
+	  pclose (fp);
+	  //printf ("%s\n", cmd_string);
+	}
+	
+	return pid;
+}
 
 void
 get_host_informations (virConnectPtr conn, char *buffer)
@@ -152,7 +182,7 @@ get_domain_cpu_usage (struct domain_metadata *domain_metadatas, int guestCpus)
 void
 get_domains_informations (virConnectPtr conn, virDomainPtr *allDomains, int numDomains, struct domain_metadata *domain_metadatas)
 {
-  char row[ROW_LENGTH], hostname[21];
+  char row[ROW_LENGTH * 2], hostname[21];
   int i;
   virDomainInfo info;
   virDomainMemoryStatStruct mem_stat;
@@ -185,9 +215,9 @@ get_domains_informations (virConnectPtr conn, virDomainPtr *allDomains, int numD
     cpu_usage = get_domain_cpu_usage (domain_metadatas + i, info.nrVirtCpu);
 
     /* Trim hostname. Prevent stacksmashing. */
-    strncpy (hostname, virDomainGetName (allDomains[i]), 20);
+    strncpy (hostname, domain_metadatas[i].domainName, 20);
     
-    sprintf (row, "  %-22s %10s %5luMb %5lluMb %7d %6.1lf%s %9s\n", 
+    sprintf (row, "  %-22s %10s %5luMb %5lluMb %7d %6.1lf%s %9s\n  %33d %41s\n", 
 	hostname,
 	getDomainState (info.state),
 	info.memory / 1024,
@@ -195,7 +225,9 @@ get_domains_informations (virConnectPtr conn, virDomainPtr *allDomains, int numD
 	info.nrVirtCpu,
 	cpu_usage,
 	"%%",
-	virDomainGetOSType (allDomains[i]));
+	domain_metadatas[i].osType,
+	get_pid_by_process_name (domain_metadatas[i].domainName),
+	"-");
 
     printw (row);
   }
@@ -215,7 +247,24 @@ print_columns ()
 {
   attron (A_REVERSE);
   printw ("%-24s %10s %7s %7s %7s %7s %9s  \n", "  NAME", "STATE", "MEMORY", "USING", "#vCPUs", "CPU%", "OS-TYPE");
+  printw ("%35s %43s\n", "  PID", "INSTRUCTIONS  ");
   attroff (A_REVERSE);
+}
+
+void
+init_domain_metadatas (struct domain_metadata *domain_metadatas, virDomainPtr *allDomains, int numDomains)
+{
+  int i;
+
+  for (i = 0; i < numDomains; i++) 
+  {
+    /* Get domain names */
+    strncpy (domain_metadatas[i].domainName, virDomainGetName (allDomains[i]), 50);
+    printf ("%s", domain_metadatas[i].domainName);
+
+    /* Get os type */
+    strncpy (domain_metadatas[i].osType, virDomainGetOSType (allDomains[i]), 10);
+  }
 }
 
 int
@@ -229,9 +278,9 @@ main (void)
   struct domain_metadata *domain_metadatas;
 
   /* Start curses mode.
-   * Loop every 1seconds and cursor invisible. */
+   * Loop every TIME_INTERVAL * 1seconds and cursor invisible. */
   initscr ();
-  halfdelay (10);
+  halfdelay (TIME_INTERVAL * 10);
   curs_set (0);	
 
   /* Open a connection for full read-write access. */
@@ -245,6 +294,9 @@ main (void)
   /* Get all domains */
   numDomains = get_domains_ptr (&allDomains, conn);
   domain_metadatas = (struct domain_metadata *) calloc (numDomains, sizeof (struct domain_metadata));
+
+  /* Init domain_metadats */
+  init_domain_metadatas (domain_metadatas, allDomains, numDomains);
 
   /* Main loop. */
   while ((ch = getch()) != 'q')
