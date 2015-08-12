@@ -1,7 +1,7 @@
 SRCS = monitor.c
 
 CC = gcc
-CFLAGS = -g -Wall
+CFLAGS = -g 
 LIBS = -lvirt -lncurses
 
 TARGET = monitor

@@ -4,6 +4,8 @@
 #include <string.h>
 #include <libvirt/libvirt.h>
 #include <ncurses.h>
+#include <asm/unistd.h>
+#include <linux/perf_event.h>
 
 #define ROW_LENGTH 80
 #define HOST_INFORMATION_BUFFER_SIZE 240
@@ -14,11 +16,49 @@
 struct domain_metadata {
   char domainName[50];
   char osType[10];
+  int fd;		// File descriptor for counting instructions.
   time_t prevTimestamp;
   time_t curTimestamp;
   unsigned long long prevCpuTime;
   unsigned long long curCpuTime;
 };
+
+int
+perf_event_open (struct perf_event_attr *event_attr, pid_t pid, int cpu, int group_fd, unsigned long flags)
+{
+  return syscall (__NR_perf_event_open, event_attr, pid, cpu, group_fd, flags);
+}
+
+long long
+get_instructions (pid_t pid, struct domain_metadata *domain_metadata)
+{
+  long long instructions;
+
+  if (domain_metadata->fd == 0)
+  {
+    struct perf_event_attr p_event;
+
+    memset (&p_event, 0, sizeof (struct perf_event_attr));
+
+    p_event.type = PERF_TYPE_HARDWARE;
+    p_event.config = PERF_COUNT_HW_INSTRUCTIONS;
+    p_event.size = sizeof (struct perf_event_attr);
+    p_event.disabled = 1;
+
+    if ((domain_metadata->fd = perf_event_open (&p_event, pid, -1, -1, 0)) == -1)
+    {
+      domain_metadata->fd = 0;
+      return 333330;
+    }
+
+    ioctl (domain_metadata->fd, PERF_EVENT_IOC_ENABLE, 0);
+  }
+
+  read (domain_metadata->fd, &instructions, sizeof (long long));
+  ioctl (domain_metadata->fd, PERF_EVENT_IOC_RESET, 0);
+
+  return instructions;
+}
   
 pid_t 
 get_pid_by_process_name(char *process_name)
@@ -208,6 +248,8 @@ get_domains_informations (virConnectPtr conn, virDomainPtr *allDomains, int numD
   virDomainInfo info;
   virDomainMemoryStatStruct mem_stat;
   double cpu_usage;
+  pid_t pid;
+  long long instructions;
 
   for (i = 0; i < numDomains; i++)
   {
@@ -238,7 +280,21 @@ get_domains_informations (virConnectPtr conn, virDomainPtr *allDomains, int numD
     /* Trim hostname. Prevent stacksmashing. */
     strncpy (hostname, domain_metadatas[i].domainName, 20);
 
-    sprintf (row, "  %-22s %10s %5luMb %5lluMb %7d %6.1lf%s %9s\n  %33d %41s\n", 
+    /* Get pid */
+    pid = get_pid (domain_metadatas[i].domainName);
+
+    /* Get instructions count. */
+    if (pid == -1)
+    {
+      instructions = 0;
+      domain_metadatas[i].fd = 0;
+    }
+    else
+    {
+      instructions = get_instructions (pid, &domain_metadatas[i]);
+    }
+
+    sprintf (row, "  %-22s %10s %5luMb %5lluMb %7d %6.1lf%s %9s\n  %33d %41lld\n", 
 	hostname,
 	getDomainState (info.state),
 	info.memory / 1024,
@@ -247,9 +303,8 @@ get_domains_informations (virConnectPtr conn, virDomainPtr *allDomains, int numD
 	cpu_usage,
 	"%%",
 	domain_metadatas[i].osType,
-	get_pid (domain_metadatas[i].domainName),
-	//get_pid_by_process_name (domain_metadatas[i].domainName),
-	"-");
+	pid,
+	instructions);
 
     printw (row);
   }
@@ -339,6 +394,13 @@ main (void)
     get_domains_informations (conn, allDomains, numDomains, domain_metadatas);
 
     refresh ();
+  }
+
+  /* Close file descriptor */
+  while (--numDomains >= 0)
+  {
+    if (domain_metadatas[numDomains].fd != 0)
+      close (domain_metadatas[numDomains].fd);
   }
 
   /* Deallocate memory */
