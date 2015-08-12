@@ -23,7 +23,7 @@ struct domain_metadata {
 pid_t 
 get_pid_by_process_name(char *process_name)
 {
-	pid_t pid = -1;
+	pid_t pid = 0;
 	char cmd_string[512];
 	FILE *fp;
 
@@ -38,12 +38,33 @@ get_pid_by_process_name(char *process_name)
 	  //fgets (cmd_string, sizeof (cmd_string), fp);
 	  //fseek(fp, 0, SEEK_SET);
 	  fscanf(fp, "%d", &pid);
+	  //fgets (test, 5, fp);
 
 	  pclose (fp);
 	  //printf ("%s\n", cmd_string);
 	}
 	
 	return pid;
+}
+
+pid_t
+get_pid (char *process_name)
+{
+  pid_t pid = -1;
+  char address[512];
+  FILE *fp;
+
+  sprintf (address, "/var/run/libvirt/qemu/%s.pid", process_name);
+
+  fp = fopen (address, "r");
+
+  if (fp != NULL)
+  {
+    fscanf (fp, "%d", &pid);
+    fclose (fp);
+  }
+
+  return pid;
 }
 
 void
@@ -216,7 +237,7 @@ get_domains_informations (virConnectPtr conn, virDomainPtr *allDomains, int numD
 
     /* Trim hostname. Prevent stacksmashing. */
     strncpy (hostname, domain_metadatas[i].domainName, 20);
-    
+
     sprintf (row, "  %-22s %10s %5luMb %5lluMb %7d %6.1lf%s %9s\n  %33d %41s\n", 
 	hostname,
 	getDomainState (info.state),
@@ -226,7 +247,8 @@ get_domains_informations (virConnectPtr conn, virDomainPtr *allDomains, int numD
 	cpu_usage,
 	"%%",
 	domain_metadatas[i].osType,
-	get_pid_by_process_name (domain_metadatas[i].domainName),
+	get_pid (domain_metadatas[i].domainName),
+	//get_pid_by_process_name (domain_metadatas[i].domainName),
 	"-");
 
     printw (row);
