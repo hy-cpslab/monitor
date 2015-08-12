@@ -1,3 +1,6 @@
 KVM monitoring program.
 
 libvirt and ncurses libraries are requested for this program.
+
+Todo: 	Verify instructions count value.
+	Average instructions count value.
