@@ -12,15 +12,23 @@
 #define ERROR 4294967295 	/* Unsigned int -1 */
 
 #define TIME_INTERVAL 1
+#define AVERAGE_TIME 8
 
 struct domain_metadata {
   char domainName[50];
   char osType[10];
+
   int fd;		// File descriptor for counting instructions.
+  int avgTime;		// Average Instructions = avgSum / avgTime
+
   time_t prevTimestamp;
   time_t curTimestamp;
+
   unsigned long long prevCpuTime;
   unsigned long long curCpuTime;
+
+  long long avgSum;
+  long long avgInst;
 };
 
 int
@@ -292,9 +300,19 @@ get_domains_informations (virConnectPtr conn, virDomainPtr *allDomains, int numD
     else
     {
       instructions = get_instructions (pid, &domain_metadatas[i]);
+
+      domain_metadatas[i].avgSum += instructions;
+      domain_metadatas[i].avgTime++;
+
+      if (domain_metadatas[i].avgTime == AVERAGE_TIME)
+      {
+	domain_metadatas[i].avgInst = domain_metadatas[i].avgSum / domain_metadatas[i].avgTime;
+	domain_metadatas[i].avgSum = 0;
+	domain_metadatas[i].avgTime = 0;
+      }
     }
 
-    sprintf (row, "  %-22s %10s %5luMb %5lluMb %7d %6.1lf%s %9s\n  %33d %41lld\n", 
+    sprintf (row, "  %-22s %10s %5luMb %5lluMb %7d %6.1lf%s %9s\n  %33d %15lld %25lld\n", 
 	hostname,
 	getDomainState (info.state),
 	info.memory / 1024,
@@ -304,7 +322,8 @@ get_domains_informations (virConnectPtr conn, virDomainPtr *allDomains, int numD
 	"%%",
 	domain_metadatas[i].osType,
 	pid,
-	instructions);
+	instructions,
+	domain_metadatas[i].avgInst);
 
     printw (row);
   }
@@ -324,7 +343,7 @@ print_columns ()
 {
   attron (A_REVERSE);
   printw ("%-24s %10s %7s %7s %7s %7s %9s  \n", "  NAME", "STATE", "MEMORY", "USING", "#vCPUs", "CPU%", "OS-TYPE");
-  printw ("%35s %43s\n", "  PID", "INSTRUCTIONS  ");
+  printw ("%35s %15s %27s\n", "  PID", "INSTRUCTIONS", "AVERAGE INSTRUCTIONS  ");
   attroff (A_REVERSE);
 }
 
